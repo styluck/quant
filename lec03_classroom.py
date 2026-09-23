@@ -224,7 +224,7 @@ def task4_beta_one_portfolio(common, codes, names, mean_ann, cov_ann):
     )
     fig.tight_layout()
     fig.savefig(OUTPUT_DIR / "task4_beta_one_portfolio.png", dpi=220)
-    plt.close(fig)
+    
 
     portfolio_daily = common[codes] @ weight
     nav = pd.DataFrame(
@@ -245,7 +245,7 @@ def task4_beta_one_portfolio(common, codes, names, mean_ann, cov_ann):
     axis.legend(frameon=False)
     plt.tight_layout()
     plt.savefig(OUTPUT_DIR / "task4_beta_one_nav.png", dpi=220)
-    plt.close()
+    
     return result
 
 
@@ -290,7 +290,7 @@ def extension_beta_one_min_variance(common, codes, names, mean_ann, cov_ann):
     )
     fig.tight_layout()
     fig.savefig(OUTPUT_DIR / "extension_beta_one_minvar.png", dpi=220)
-    plt.close(fig)
+    
     return result
 
 

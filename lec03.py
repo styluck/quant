@@ -146,7 +146,7 @@ def plot_scatter(models, samples, codes):
     axes[0].set_ylabel("Stock excess return")
     fig.tight_layout()
     fig.savefig(OUTPUT_DIR / "capm_scatter.png", dpi=200)
-    plt.close(fig)
+    
 
 
 def plot_rolling_beta(stock_returns, market_return, window=252):
@@ -171,7 +171,7 @@ def plot_rolling_beta(stock_returns, market_return, window=252):
     axis.legend(frameon=False, ncol=2)
     plt.tight_layout()
     plt.savefig(OUTPUT_DIR / "rolling_beta_2020_2025.png", dpi=220)
-    plt.close()
+    
     rolling_beta.to_csv(OUTPUT_DIR / "rolling_beta_2020_2025.csv")
 
 
@@ -218,7 +218,7 @@ def plot_top10_mean_variance(stock_returns, names):
     axis.grid(alpha=0.25)
     fig.tight_layout()
     fig.savefig(OUTPUT_DIR / "top10_mean_variance.png", dpi=220)
-    plt.close(fig)
+    
     return stats
 
 
@@ -289,7 +289,7 @@ def plot_long_only_feasible_set(common_returns, names):
     axis.legend(frameon=False)
     fig.tight_layout()
     fig.savefig(OUTPUT_DIR / "top10_long_only_feasible_set.png", dpi=220)
-    plt.close(fig)
+    
     return mean_ann, cov_ann
 
 
@@ -321,7 +321,7 @@ def plot_top10_rolling_beta(stock_returns, market_return, names, window=252):
         axes.flat[index].set_xlabel("日期")
     fig.tight_layout()
     fig.savefig(OUTPUT_DIR / "top10_rolling_beta_2020_2025.png", dpi=220)
-    plt.close(fig)
+    
     return rolling_beta
 
 
@@ -361,7 +361,7 @@ def plot_beta_one_portfolio(mean_ann, cov_ann, beta, codes, names):
     fig.suptitle(f"Beta=1 最小方差组合：年化收益 {portfolio_return:.1%}，年化波动 {portfolio_vol:.1%}")
     fig.tight_layout()
     fig.savefig(OUTPUT_DIR / "top10_beta1_minvar.png", dpi=220)
-    plt.close(fig)
+    
     return result
 
 
@@ -418,7 +418,7 @@ def plot_simple_beta_one_portfolio(common, mean_ann, cov_ann, beta, codes, names
     )
     fig.tight_layout()
     fig.savefig(OUTPUT_DIR / "top10_beta1_simple.png", dpi=220)
-    plt.close(fig)
+    
 
     portfolio_daily = common[codes] @ weights
     nav = pd.DataFrame(
@@ -439,7 +439,7 @@ def plot_simple_beta_one_portfolio(common, mean_ann, cov_ann, beta, codes, names
     axis.legend(frameon=False)
     fig.tight_layout()
     fig.savefig(OUTPUT_DIR / "top10_beta1_simple_nav.png", dpi=220)
-    plt.close(fig)
+    
     return result
 
 
