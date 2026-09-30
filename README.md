@@ -1,4 +1,4 @@
-作业邮箱：quant_math@126.com
+作业邮箱：quant_math@126.com 命名方式：学号+姓名+第n次作业
 
 我的个人邮箱：xiaolh@jnu.edu.cn
 
