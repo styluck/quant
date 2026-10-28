@@ -6,6 +6,7 @@
 
 数据集：https://jnueducn-my.sharepoint.com/:f:/g/personal/xiaolh_jnu_edu_cn/IgBpITB43WzUSIPX36k6ACcIAZmdlenJqDBjbRLF1qN1VbA?e=rEydE9
 
+期末作业分组：https://docs.qq.com/sheet/DZXZkRUNFRU16WGdK?tab=BB08J2
 
 目录结构和编码规范：
 
