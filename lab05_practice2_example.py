@@ -1,174 +1,177 @@
-"""实践二参考示例：沿用实践一的 BP 和市值，演示多因子建模与因子收益解释。
+"""实践二 example：用 BP 和市值展示完整的研究流程。
 
-实践二作业要求学生自选因子构建模型；本文件提供可参照修改的实例。
+先按 PB、市值排名构建组合并回测，再用 BP、对数市值的横截面
+回归解释同一组合的收益。选股评分与收益解释是两个不同环节。
+
+在项目根目录运行：python code/lab05/lab05_practice2_example.py
+也可在 IDE 中按 # %% 顺序分段运行。
+
+输入：code/data/ 中的日度宽表；输出：code/output/lab05/practice2_example/ 下的图片。
+收益使用小数，乘 100 后单位为百分点。
 """
 import sys
+from pathlib import Path
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 
-# %% 0. 导入程序包
+# 让脚本能 import 到 code/data_io 下的载入函数
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+# %% 0. 准备运行环境与结果目录
 import numpy as np
 import pandas as pd
 import statsmodels.api as sm
-from data_loader import DATA_DIR, OUTPUT_DIR
-OUTPUT_DIR = OUTPUT_DIR / 'practice2_example'
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
+from data_io import load_data
+
+OUTPUT_DIR = Path(__file__).resolve().parents[1] / 'output' / 'lab05' / 'practice2_example'
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
 
-# %% L05-00：单月评分选股
-# 直接读取日线宽表，保留前300只股票的月末数据。
-pb_daily = pd.read_csv(DATA_DIR / 'pb_sh.csv', index_col=0, parse_dates=True)
-codes = pb_daily.columns[:300]
-pb_daily = pb_daily.loc['2019-12':'2025-12', codes]
-dates = pb_daily.groupby(pb_daily.index.to_period('M')).tail(1).index
-pb_month = pb_daily.reindex(dates)
-mv_month = pd.read_csv(DATA_DIR / 'total_mv_sh.csv',
-                      index_col=0, parse_dates=True).reindex(index=dates, columns=codes)
-close_daily = pd.read_csv(DATA_DIR / 'close_sh.csv',
-                         index_col=0, parse_dates=True)[codes]
-adj_daily = pd.read_csv(DATA_DIR / 'adj_factor_sh.csv',
-                       index_col=0, parse_dates=True)[codes]
-st_month = pd.read_csv(DATA_DIR / 'is_st_sh.csv',
-                      index_col=0, parse_dates=True).reindex(index=dates, columns=codes)
-vol_month = pd.read_csv(DATA_DIR / 'vol_sh.csv',
-                       index_col=0, parse_dates=True).reindex(index=dates, columns=codes)
-# 月末无报价时，按最近一个交易日的复权收盘价估值。
-price = (close_daily * adj_daily).ffill().reindex(dates)
-next_ret = price.shift(-1) / price - 1
-score_panel = pd.DataFrame({
-    'pb': pb_month.stack(future_stack=True),
-    'total_mv': mv_month.stack(future_stack=True),
-    'price': price.stack(future_stack=True),
-    'is_st': st_month.stack(future_stack=True),
-    'volume': vol_month.stack(future_stack=True),
-    'next_ret': next_ret.stack(future_stack=True)
-}).rename_axis(['date', 'code']).reset_index()
-pool = score_panel.loc[(score_panel['pb'] > 0)
-                       & (score_panel['total_mv'] > 0)
-                       & (score_panel['price'] > 0)
-                       & (score_panel['is_st'] == 0)
-                       & (score_panel['volume'] > 0)
-                       & (score_panel['date'] < dates[-1])].copy()
-month = pool.loc[pool['date'] == '2021-12-31'].copy()
+# %% 1. 数据载入：读入全部日度宽表
+# 宽表的行是交易日、列是股票。这里只读入，不做任何清洗。
+START, END = '2019-12-01', '2025-12-31'
+DAILY_FIELDS = ['close', 'adj_factor', 'pb', 'total_mv', 'vol',
+                'amount', 'is_st', 'turnover_rate']
 
-month['score'] = (month['pb'].rank(ascending=False)
-                  + month['total_mv'].rank(ascending=False))
-selected = month.nlargest(20, 'score')
-print(selected[['code', 'pb', 'total_mv', 'score']])
+daily = {}
+for name in DAILY_FIELDS:
+    df = load_data(name, START, END)
+    df.index.name = 'date'
+    df.columns.name = 'code'
+    daily[name] = df
 
-selected.to_csv(OUTPUT_DIR / 'score_selected.csv', index=False)
+# %% 2. 生成月末面板
+# 月末日期：每月最后一个交易日
+calendar = daily['close'].index
+dates = pd.DatetimeIndex(
+    pd.Series(calendar).groupby(calendar.to_period('M')).max())
 
-# %% L05-00A：逐月选股，计算下一月收益
-return_rows, holding_rows, change_rows = [], [], []
-previous = set()
-for date, g in pool.groupby('date'):
+# 在日度层面判断可交易：正收盘价、正成交量、正成交额、非 ST、有换手
+tradable = ((daily['close'] > 0) & (daily['vol'] > 0)
+            & (daily['amount'] > 0) & (daily['is_st'] == 0)
+            & (daily['turnover_rate'] > 0))
+# 只看月末那天的可交易状态：True 才把该股该月纳入样本
+tradable_end = tradable.reindex(dates)
+
+# 取每个字段在月末日那天的值，stack 成长表；不可交易的格子被置 NaN 后由 stack 丢掉
+monthly = {}
+for name in DAILY_FIELDS:
+    monthly[name] = (daily[name].reindex(dates).where(tradable_end)
+                     .stack(future_stack=True).rename_axis(['date', 'code']))
+panel = pd.DataFrame(monthly).reset_index().sort_values(['code', 'date'])
+
+panel['adj_close'] = panel['close'] * panel['adj_factor']
+panel['bp'] = 1 / panel['pb']                # BP = 1/PB
+panel['size'] = np.log(panel['total_mv'])    # 对数总市值（万元，单位对 log/排名无影响）
+
+# 下一月收益：同一只股票下个月末复权价 / 本月末复权价 - 1
+g = panel.groupby('code')
+panel['return_end'] = g['date'].shift(-1)
+panel['next_ret'] = g['adj_close'].shift(-1) / panel['adj_close'] - 1
+panel['next_ret'] = panel['next_ret'].replace([np.inf, -np.inf], np.nan)
+
+# 只留 pb>0（bp 才有意义）的样本；可交易性已在上面处理
+panel = panel[panel['pb'] > 0]
+panel = panel.sort_values(['date', 'code']).reset_index(drop=True)
+
+# %% 3. 逐月调仓：按 PB、市值排名选股，记录持仓与下一月收益
+# PB 越低、市值越小，降序排名数值越大；两项名次相加取前 20 只，等权持有。
+holding_rows, return_rows = [], []
+for date, g in panel.groupby('date'):
+    g = g.dropna(subset=['next_ret'])    # 丢掉下一月收益缺失的（最后一个月）
+    if g.empty:
+        continue
     g = g.copy()
-    g['score'] = (g['pb'].rank(ascending=False)
-                  + g['total_mv'].rank(ascending=False))
-    chosen = g.nlargest(20, 'score').copy()
-    small = g.nsmallest(20, 'total_mv')
-    end = dates[dates.get_loc(date) + 1]
-    return_rows.append({'date': end,
-        '低PB＋小市值': chosen['next_ret'].mean(skipna=False),
-        '仅小市值': small['next_ret'].mean(skipna=False),
-        '股票池等权': g['next_ret'].mean(skipna=False)})
+    g['score'] = g['pb'].rank(ascending=False) + g['total_mv'].rank(ascending=False)
+    chosen = g.nlargest(20, 'score')
     chosen['weight'] = 1 / len(chosen)
-    chosen['return_end'] = end
     holding_rows.append(chosen)
-    current = set(chosen['code'])
-    change_rows.append({'date': date, '买入数量': len(current - previous),
-                        '卖出数量': len(previous - current)})
-    previous = current
-strategy_returns = pd.DataFrame(return_rows).set_index('date')
+    return_rows.append({
+        'date': date,                                 # 形成持仓的月末
+        'return_end': chosen['return_end'].iloc[0],   # 收益实现的下月末
+        '组合收益': chosen['next_ret'].mean(),
+    })
+
 holdings = pd.concat(holding_rows, ignore_index=True)
-changes = pd.DataFrame(change_rows).set_index('date')
+strategy_returns = pd.DataFrame(return_rows)   # 列：date、return_end、组合收益
 
-holdings.to_csv(OUTPUT_DIR / 'score_holdings.csv', index=False)
-strategy_returns.to_csv(OUTPUT_DIR / 'score_monthly_returns.csv')
-changes.to_csv(OUTPUT_DIR / 'score_position_changes.csv')
-
-# %% L05-00B：计算净值和回撤
-nav = (1 + strategy_returns).cumprod(skipna=False)
-nav.loc[dates[0]] = 1.0
-nav = nav.sort_index()
+# %% 4. 回测：净值、收益与回撤
+# 收益按「收益实现月末」对齐，起始净值为 1
+nav = (1 + strategy_returns.set_index('return_end')['组合收益']).cumprod().sort_index()
+nav = pd.concat([pd.Series([1.0], index=[strategy_returns['date'].min()]), nav])
 drawdown = nav / nav.cummax() - 1
+
 performance = pd.DataFrame({
     '累计收益': nav.iloc[-1] - 1,
     '年化收益': nav.iloc[-1] ** (12 / len(strategy_returns)) - 1,
-    '年化波动率': strategy_returns.std() * np.sqrt(12),
-    '最大回撤': drawdown.min()
-})
-
-nav.to_csv(OUTPUT_DIR / 'score_nav.csv')
-performance.to_csv(OUTPUT_DIR / 'score_performance.csv')
+    '年化波动率': strategy_returns['组合收益'].std() * np.sqrt(12),
+    '最大回撤': drawdown.min(),
+}, index=['组合'])
 print(performance)
 
+fig, ax = plt.subplots(figsize=(10, 4.5))
+nav.plot(ax=ax, linewidth=1.3)
+ax.set(xlabel='收益实现日期', ylabel='净值（初始值为1）')
+ax.grid(alpha=.2)
+fig.tight_layout()
+fig.savefig(OUTPUT_DIR / 'score_nav.png', dpi=160)
 
-# %% 1. 构造 BP 与规模暴露
-sample = pool.copy()
-sample['bp'] = 1 / sample['pb']
-sample['size'] = np.log(sample['total_mv'])
-sample['return_end'] = sample['date'].map(
-    pd.Series(dates[1:], index=dates[:-1]))
-for column in ['bp', 'size']:
-    group = sample.groupby('date')[column]
-    sample[column + '_z'] = ((sample[column] - group.transform('mean'))
-                              / group.transform('std'))
+# %% 5. 构造 BP、市值暴露并按月标准化
+# 以下用模型解释已发生的收益。BP 高=净资产相对价格高；size 高=市值大。
+sample = panel.replace([np.inf, -np.inf], np.nan).dropna(subset=['bp', 'size', 'next_ret'])
+for col in ['bp', 'size']:
+    grp = sample.groupby('date')[col]
+    sample[col + '_z'] = (sample[col] - grp.transform('mean')) / grp.transform('std')
 
-# %% 2. 单月回归并解释系数
-month = sample.loc[sample['date'] == '2021-12-31']
+# %% 6. 单月横截面回归：解释系数
+# 观测是同一个月的不同股票，不是单只股票的时间序列
+# 2021 年 12 月末暴露 配对 2022 年 1 月收益，含截距
+month = sample[sample['date'] == '2021-12-31']
 X = sm.add_constant(month[['bp_z', 'size_z']])
-one_month = sm.OLS(month['next_ret'], X).fit()
-print('2022年1月回归系数（乘100后单位为百分点）：')
-print(100 * one_month.params)
-print('调整后 R²：', one_month.rsquared_adj)
+res = sm.OLS(month['next_ret'], X).fit()
+print('2022 年 1 月回归系数（乘 100 后单位为百分点）：')
+print(100 * res.params)
+print('调整后 R²：', res.rsquared_adj)
 
-# %% 3. 逐月估计因子收益和个股残差
+# %% 7. 逐月估计：保存因子收益与个股残差
+# 每个月独立回归：横截面系数=当月事后因子收益，残差=股票未解释收益
 factor_rows, stock_rows = [], []
-for date, group in sample.groupby('date'):
-    X = sm.add_constant(group[['bp_z', 'size_z']])
-    fit = sm.OLS(group['next_ret'], X).fit()
-    factor_rows.append({'date': date,
-        'return_end': group['return_end'].iloc[0],
-        **fit.params.to_dict(), 'n': int(fit.nobs),
-        'adjusted_r_squared': fit.rsquared_adj})
-    stock_rows.append(group.assign(fitted=fit.fittedvalues, resid=fit.resid))
+for date, g in sample.groupby('date'):
+    X = sm.add_constant(g[['bp_z', 'size_z']])
+    fit = sm.OLS(g['next_ret'], X).fit()
+    factor_rows.append({'date': date, 'return_end': g['return_end'].iloc[0],
+                        **fit.params.to_dict(), 'n': int(fit.nobs),
+                        'adjusted_r_squared': fit.rsquared_adj})
+    stock_rows.append(g.assign(fitted=fit.fittedvalues, resid=fit.resid))
+
 factor = pd.DataFrame(factor_rows).set_index('date')
 stock = pd.concat(stock_rows, ignore_index=True)
-coefficients = factor[['const', 'bp_z', 'size_z']]
-summary = pd.DataFrame({
-    'mean_monthly': coefficients.mean(),
-    'std_monthly': coefficients.std(),
-    'positive_fraction': (coefficients > 0).mean()})
-factor.to_csv(OUTPUT_DIR / 'factor_returns.csv', encoding='utf-8-sig')
-stock.to_csv(OUTPUT_DIR / 'stock_regression_results.csv',
-             index=False, encoding='utf-8-sig')
-summary.to_csv(OUTPUT_DIR / 'factor_summary.csv', encoding='utf-8-sig')
 
-# %% 4. 绘制 BP、规模因子收益曲线
+# %% 8. 观察因子收益的跨月变化
 fig, axes = plt.subplots(2, 1, figsize=(10, 5.5), sharex=True)
-for column, label, ax in zip(['bp_z', 'size_z'], ['BP', '规模'], axes):
-    ax.plot(factor['return_end'], 100 * factor[column], linewidth=1.2)
+for col, label, ax in zip(['bp_z', 'size_z'], ['BP', '规模'], axes):
+    ax.plot(factor['return_end'], 100 * factor[col], linewidth=1.2)
     ax.axhline(0, color='gray', linewidth=.7)
     ax.set_ylabel(label + '系数（百分点）')
     ax.grid(alpha=.2)
 axes[-1].set_xlabel('收益实现月份')
 fig.tight_layout()
 fig.savefig(OUTPUT_DIR / 'monthly_factor_returns.png', dpi=160)
-fig.savefig(OUTPUT_DIR / 'monthly_factor_returns.pdf')
-plt.close(fig)
 
-# %% 5. 分解实践一评分组合的月收益
+# %% 9. 利用原持仓分解评分组合的月收益
+# 按 date、code 对齐原持仓与该月回归结果，再按原权重加总
+# 一个因子的贡献 = 持仓加权平均暴露 × 当月因子系数
 positions = holdings[['date', 'code', 'weight']].merge(
     stock[['date', 'code', 'bp_z', 'size_z', 'next_ret', 'resid']],
     on=['date', 'code'], how='left')
-for column in ['bp_z', 'size_z', 'next_ret', 'resid']:
-    positions['weighted_' + column] = positions['weight'] * positions[column]
+for col in ['bp_z', 'size_z', 'next_ret', 'resid']:
+    positions['weighted_' + col] = positions['weight'] * positions[col]
+
 portfolio = positions.groupby('date')[
     ['weighted_bp_z', 'weighted_size_z', 'weighted_next_ret', 'weighted_resid']
 ].sum().join(factor[['return_end', 'const', 'bp_z', 'size_z']])
@@ -176,26 +179,17 @@ portfolio['截距项'] = portfolio['const']
 portfolio['BP贡献'] = portfolio['weighted_bp_z'] * portfolio['bp_z']
 portfolio['规模贡献'] = portfolio['weighted_size_z'] * portfolio['size_z']
 portfolio['残差部分'] = portfolio['weighted_resid']
-parts = ['截距项', 'BP贡献', '规模贡献', '残差部分']
-portfolio['分解合计'] = portfolio[parts].sum(axis=1)
 portfolio['实际收益'] = portfolio['weighted_next_ret']
-portfolio.to_csv(OUTPUT_DIR / 'portfolio_attribution.csv', encoding='utf-8-sig')
+
+parts = ['截距项', 'BP贡献', '规模贡献', '残差部分']
+fig, ax = plt.subplots(figsize=(8, 4))
+(100 * portfolio[parts].mean()).plot.bar(ax=ax, rot=0, color='#225896')
+ax.axhline(0, color='gray', linewidth=.7)
+ax.set(ylabel='平均月收益贡献（百分点）', xlabel='')
+ax.grid(axis='y', alpha=.2)
+fig.tight_layout()
+fig.savefig(OUTPUT_DIR / 'portfolio_attribution.png', dpi=160)
+
 print('平均月收益分解（百分点）：')
 print(100 * portfolio[parts + ['实际收益']].mean())
-
-# %% 6. 保存简要运行报告
-report = [
-    '# 实践二运行报告', '',
-    '模型：下一月收益 = 截距 + BP暴露×BP系数 + 规模暴露×规模系数 + 残差。', '',
-    f'完成 {len(factor)} 个月、{len(sample)} 条股票月观测的回归。', '',
-    '2021年12月末暴露解释2022年1月收益，控制另一项暴露后：',
-    f"- BP暴露增加1，拟合月收益变化 {100 * one_month.params['bp_z']:.4f} 个百分点。",
-    f"- 规模暴露增加1，拟合月收益变化 {100 * one_month.params['size_z']:.4f} 个百分点。",
-    f"- 两项暴露均为0时，拟合收益为 {100 * one_month.params['const']:.4f}%。", '',
-    f"平均月度BP系数：{100 * summary.loc['bp_z', 'mean_monthly']:.4f} 个百分点。",
-    f"平均月度规模系数：{100 * summary.loc['size_z', 'mean_monthly']:.4f} 个百分点。",
-    f"收益分解最大误差：{(portfolio['分解合计'] - portfolio['实际收益']).abs().max():.3g}。", '',
-    'CSV中的收益与系数使用小数，乘100后单位为百分点。']
-(OUTPUT_DIR / 'run_report.md').write_text('\n'.join(report) + '\n', encoding='utf-8')
-print('\n'.join(report))
 print('结果目录：', OUTPUT_DIR)
