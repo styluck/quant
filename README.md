@@ -6,7 +6,7 @@
 
 数据集：https://jnueducn-my.sharepoint.com/:f:/g/personal/xiaolh_jnu_edu_cn/IgBpITB43WzUSIPX36k6ACcIAZmdlenJqDBjbRLF1qN1VbA?e=rEydE9
 
-worldquant 101因子：https://zhuanlan.zhihu.com/p/28440433
+worldquant 101因子：[https://zhuanlan.zhihu.com/p/28440433](https://github.com/Harvey-Sun/World_Quant_Alphas)
 
 期末作业分组：https://docs.qq.com/sheet/DZXZkRUNFRU16WGdK?tab=BB08J2
 
